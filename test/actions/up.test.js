@@ -6,14 +6,13 @@ const proxyquire = require("proxyquire");
 describe("up", () => {
   let up;
   let status;
-  let config;
   let migrationsDir;
+  let changelog;
   let db;
   let client;
 
   let firstPendingMigration;
   let secondPendingMigration;
-  let changelogCollection;
 
   function mockStatus() {
     return sinon.stub().returns(
@@ -38,15 +37,6 @@ describe("up", () => {
     );
   }
 
-  function mockConfig() {
-    return {
-      shouldExist: sinon.stub().returns(Promise.resolve()),
-      read: sinon.stub().returns({
-        changelogCollectionName: "changelog"
-      })
-    };
-  }
-
   function mockMigrationsDir() {
     const mock = {};
     mock.loadMigration = sinon.stub();
@@ -59,11 +49,14 @@ describe("up", () => {
     return mock;
   }
 
+  function mockChangelog() {
+    return {
+      migrated: sinon.stub().returns(Promise.resolve())
+    };
+  }
+
   function mockDb() {
-    const mock = {};
-    mock.collection = sinon.stub();
-    mock.collection.withArgs("changelog").returns(changelogCollection);
-    return mock;
+    return { the: 'db' };
   }
 
   function mockClient() {
@@ -78,28 +71,21 @@ describe("up", () => {
     return migration;
   }
 
-  function mockChangelogCollection() {
-    return {
-      insertOne: sinon.stub().returns(Promise.resolve())
-    };
-  }
-
   function loadUpWithInjectedMocks() {
     return proxyquire("../../lib/actions/up", {
       "./status": status,
-      "../env/config": config,
-      "../env/migrationsDir": migrationsDir
+      "../env/migrationsDir": migrationsDir,
+      "../env/changelog": changelog
     });
   }
 
   beforeEach(() => {
     firstPendingMigration = mockMigration();
     secondPendingMigration = mockMigration();
-    changelogCollection = mockChangelogCollection();
 
     status = mockStatus();
-    config = mockConfig();
     migrationsDir = mockMigrationsDir();
+    changelog = mockChangelog();
     db = mockDb();
     client = mockClient();
 
@@ -153,18 +139,12 @@ describe("up", () => {
   });
 
   it("should populate the changelog with info about the upgraded migrations", async () => {
-    const clock = sinon.useFakeTimers(
-      new Date("2016-06-09T08:07:00.077Z").getTime()
-    );
     await up(db);
-
-    expect(changelogCollection.insertOne.called).to.equal(true);
-    expect(changelogCollection.insertOne.callCount).to.equal(2);
-    expect(changelogCollection.insertOne.getCall(0).args[0]).to.deep.equal({
-      appliedAt: new Date("2016-06-09T08:07:00.077Z"),
-      fileName: "20160607173840-first_pending_migration.js"
-    });
-    clock.restore();
+    expect(changelog.migrated.called).to.equal(true);
+    expect(changelog.migrated.callCount).to.equal(2);
+    expect(changelog.migrated.getCall(0).args).to.deep.equal([
+      db, "20160607173840-first_pending_migration.js"
+    ]);
   });
 
   it("should yield a list of upgraded migration file names", async () => {
@@ -188,16 +168,20 @@ describe("up", () => {
   });
 
   it("should yield an error + items already migrated when unable to update the changelog", async () => {
-    changelogCollection.insertOne
+    changelog.migrated
       .onSecondCall()
-      .returns(Promise.reject(new Error("Kernel panic")));
+      .returns(Promise.reject(new Error("Changelog failure")));
     try {
       await up(db);
       expect.fail("Error was not thrown");
     } catch (err) {
       expect(err.message).to.deep.equal(
-        "Could not update changelog: Kernel panic"
+        "Could not migrate up 20160608060209-second_pending_migration.js: Changelog failure"
       );
+      expect(err.migrated).to.deep.equal([
+        "20160607173840-first_pending_migration.js",
+        "20160608060209-second_pending_migration.js"
+      ]);
     }
   });
 });

@@ -6,10 +6,8 @@ const proxyquire = require("proxyquire");
 describe("status", () => {
   let status;
   let migrationsDir;
-  let config;
-  let fs;
+  let changelog;
   let db;
-  let changelogCollection;
 
   function mockMigrationsDir() {
     return {
@@ -26,59 +24,35 @@ describe("status", () => {
     };
   }
 
-  function mockConfig() {
+  function mockChangelog() {
     return {
       shouldExist: sinon.stub().returns(Promise.resolve()),
-      read: sinon.stub().returns({
-        changelogCollectionName: "changelog"
-      })
-    };
-  }
-
-  function mockFs() {
-    return {
-      copy: sinon.stub().returns(Promise.resolve())
+      status: sinon.stub().returns(
+        Promise.resolve([
+          {
+            fileName: "20160509113224-first_migration.js",
+            appliedAt: new Date("2016-06-03T20:10:12.123Z")
+          },
+          {
+            fileName: "20160512091701-second_migration.js",
+            appliedAt: new Date("2016-06-09T20:10:12.123Z")
+          }
+        ])
+      )
     };
   }
 
   function mockDb() {
-    const mock = {};
-    mock.collection = sinon.stub();
-    mock.collection.withArgs("changelog").returns(changelogCollection);
-    return mock;
-  }
-
-  function mockChangelogCollection() {
-    return {
-      deleteOne: sinon.stub().returns(Promise.resolve()),
-      find: sinon.stub().returns({
-        toArray: sinon.stub().returns(
-          Promise.resolve([
-            {
-              fileName: "20160509113224-first_migration.js",
-              appliedAt: new Date("2016-06-03T20:10:12.123Z")
-            },
-            {
-              fileName: "20160512091701-second_migration.js",
-              appliedAt: new Date("2016-06-09T20:10:12.123Z")
-            }
-          ])
-        )
-      })
-    };
+    return { the: 'db' };
   }
 
   beforeEach(() => {
-    changelogCollection = mockChangelogCollection();
-
     migrationsDir = mockMigrationsDir();
-    config = mockConfig();
-    fs = mockFs();
+    changelog = mockChangelog();
     db = mockDb();
     status = proxyquire("../../lib/actions/status", {
       "../env/migrationsDir": migrationsDir,
-      "../env/config": config,
-      "fs-extra": fs
+      "../env/changelog": changelog,
     });
   });
 
@@ -99,20 +73,20 @@ describe("status", () => {
     }
   });
 
-  it("should check that the config file exists", async () => {
+  it("should check that the changelog exists", async () => {
     await status(db);
-    expect(config.shouldExist.called).to.equal(true);
+    expect(changelog.shouldExist.called).to.equal(true);
   });
 
-  it("should yield an error when config file does not exist", async () => {
-    config.shouldExist.returns(
-      Promise.reject(new Error("config file does not exist"))
+  it("should yield an error when changelog does not exist", async () => {
+    changelog.shouldExist.returns(
+      Promise.reject(new Error("changelog does not exist"))
     );
     try {
       await status(db);
       expect.fail("Error was not thrown");
     } catch (err) {
-      expect(err.message).to.equal("config file does not exist");
+      expect(err.message).to.equal("changelog does not exist");
     }
   });
 
@@ -135,14 +109,11 @@ describe("status", () => {
 
   it("should fetch the content of the changelog collection", async () => {
     await status(db);
-    expect(changelogCollection.find.called).to.equal(true);
-    expect(changelogCollection.find({}).toArray.called).to.equal(true);
+    expect(changelog.status.called).to.equal(true);
   });
 
   it("should yield errors that occurred when fetching the changelog collection", async () => {
-    changelogCollection
-      .find({})
-      .toArray.returns(
+    changelog.status.returns(
         Promise.reject(new Error("Cannot read from the database"))
       );
     try {

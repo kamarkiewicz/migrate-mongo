@@ -6,12 +6,11 @@ const proxyquire = require("proxyquire");
 describe("down", () => {
   let down;
   let status;
-  let config;
   let migrationsDir;
+  let changelog;
   let db;
   let client;
   let migration;
-  let changelogCollection;
 
   function mockStatus() {
     return sinon.stub().returns(
@@ -28,24 +27,20 @@ describe("down", () => {
     );
   }
 
-  function mockConfig() {
-    return {
-      shouldExist: sinon.stub().returns(Promise.resolve()),
-      read: sinon.stub().returns({ changelogCollectionName: "changelog" })
-    };
-  }
-
   function mockMigrationsDir() {
     return {
       loadMigration: sinon.stub().returns(Promise.resolve(migration))
     };
   }
 
+  function mockChangelog() {
+    return {
+      downgraded: sinon.stub().returns(Promise.resolve())
+    };
+  }
+
   function mockDb() {
-    const mock = {};
-    mock.collection = sinon.stub();
-    mock.collection.withArgs("changelog").returns(changelogCollection);
-    return mock;
+    return { the: 'db' };
   }
 
   function mockClient() {
@@ -60,27 +55,20 @@ describe("down", () => {
     return theMigration;
   }
 
-  function mockChangelogCollection() {
-    return {
-      deleteOne: sinon.stub().returns(Promise.resolve())
-    };
-  }
-
   function loadDownWithInjectedMocks() {
     return proxyquire("../../lib/actions/down", {
       "./status": status,
-      "../env/config": config,
-      "../env/migrationsDir": migrationsDir
+      "../env/migrationsDir": migrationsDir,
+      "../env/changelog": changelog
     });
   }
 
   beforeEach(() => {
     migration = mockMigration();
-    changelogCollection = mockChangelogCollection();
 
     status = mockStatus();
-    config = mockConfig();
     migrationsDir = mockMigrationsDir();
+    changelog = mockChangelog();
     db = mockDb();
     client = mockClient();
 
@@ -136,7 +124,6 @@ describe("down", () => {
     await down(db);
   });
 
-  /* eslint no-unused-vars: "off" */
   it("should allow downgrade to return promise", async () => {
     migrationsDir = mockMigrationsDir();
     down = loadDownWithInjectedMocks();
@@ -156,21 +143,21 @@ describe("down", () => {
     }
   });
 
-  it("should remove the entry of the downgraded migration from the changelog collection", async () => {
+  it("should notify changelog about the downgraded migration", async () => {
     await down(db);
-    expect(changelogCollection.deleteOne.called).to.equal(true);
-    expect(changelogCollection.deleteOne.callCount).to.equal(1);
+    expect(changelog.downgraded.called).to.equal(true);
+    expect(changelog.downgraded.callCount).to.equal(1);
   });
 
-  it("should yield errors that occurred when deleting from the changelog collection", async () => {
-    changelogCollection.deleteOne.returns(
+  it("should yield errors that occurred when notifying the changelog", async () => {
+    changelog.downgraded.returns(
       Promise.reject(new Error("Could not delete"))
     );
     try {
       await down(db);
     } catch (err) {
       expect(err.message).to.equal(
-        "Could not update changelog: Could not delete"
+        "Could not migrate down 20160609113225-last_migration.js: Could not delete"
       );
     }
   });
